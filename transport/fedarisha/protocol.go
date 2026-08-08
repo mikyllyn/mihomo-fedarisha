@@ -19,7 +19,7 @@
 //
 //  5. A special file "c_hello" is created by the client to signal a new session.
 //     The server watches for new session directories.
-package transport
+package fedarisha
 
 import (
 	"crypto/rand"

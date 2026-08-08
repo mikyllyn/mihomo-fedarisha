@@ -53,6 +53,7 @@ const (
 	OpenVPN
 	Tailscale
 	GostRelay
+	Fedarisha
 )
 
 const (
@@ -236,6 +237,8 @@ func (at AdapterType) String() string {
 		return "Tailscale"
 	case GostRelay:
 		return "GostRelay"
+	case Fedarisha:
+		return "Fedarisha"
 	case Relay:
 		return "Relay"
 	case Selector:
