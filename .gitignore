@@ -26,3 +26,4 @@ test/config/cache*
 /output
 .vscode/
 .fleet/
+_sigv4check/sigv4.go

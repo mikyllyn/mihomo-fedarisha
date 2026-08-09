@@ -80,9 +80,19 @@ func sign(req *http.Request, accessKey, secretKey, region, payloadHash string, n
 		"x-amz-date:" + amzDate + "\n"
 	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
 
+	// S3 is the one service that does NOT re-encode the path when building the
+	// canonical request: the canonical URI must be exactly the escaped path that
+	// goes out on the wire. Running the path through uriEncode here instead
+	// turns an already-escaped "%20" into "%2520" and a literal "+" into "%2B",
+	// and the signature stops matching for any key outside [A-Za-z0-9-._~/].
+	canonicalURI := req.URL.EscapedPath()
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+
 	canonicalRequest := strings.Join([]string{
 		req.Method,
-		uriEncode(req.URL.Path, true),
+		canonicalURI,
 		canonicalQuery(req),
 		canonicalHeaders,
 		signedHeaders,
