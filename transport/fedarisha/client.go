@@ -31,6 +31,10 @@ type StorageConfig struct {
 	AccessKey   string
 	SecretKey   string
 	SessionsDir string
+
+	// DialContext must be supplied by the caller inside mihomo — see the note on
+	// s3.Config. Reaching the bucket with a stock dialer terminates the process.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // TuningConfig mirrors the optional tuning block the panel emits alongside the
@@ -95,12 +99,13 @@ func buildStorage(cfg StorageConfig) (storage.Storage, error) {
 			return nil, fmt.Errorf("fedarisha: s3 bucket is empty")
 		}
 		return s3.New(s3.Config{
-			Bucket:    cfg.Bucket,
-			Prefix:    cfg.Prefix,
-			Region:    cfg.Region,
-			Endpoint:  cfg.Endpoint,
-			AccessKey: cfg.AccessKey,
-			SecretKey: cfg.SecretKey,
+			Bucket:      cfg.Bucket,
+			Prefix:      cfg.Prefix,
+			Region:      cfg.Region,
+			Endpoint:    cfg.Endpoint,
+			AccessKey:   cfg.AccessKey,
+			SecretKey:   cfg.SecretKey,
+			DialContext: cfg.DialContext,
 		}), nil
 	default:
 		return nil, fmt.Errorf("fedarisha: unsupported storage type %q", cfg.Type)
