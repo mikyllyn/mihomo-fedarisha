@@ -51,15 +51,21 @@ type TuningConfig struct {
 type Client struct {
 	dialer *Dialer
 
-	mu      sync.Mutex
-	session *yamux.Session
+	mu       sync.Mutex
+	session  *yamux.Session
+	initDone bool
 }
 
-// NewClient builds a client from the storage and tuning blocks. It verifies
-// access to the bucket eagerly, so a bad key or endpoint surfaces at proxy
-// construction rather than on the first connection.
-func NewClient(ctx context.Context, sc StorageConfig, tuning TuningConfig) (*Client, error) {
-	store, err := buildStorage(ctx, sc)
+// NewClient builds a client from the storage and tuning blocks.
+//
+// Deliberately does no network I/O. mihomo parses a proxy provider as a unit:
+// if any proxy's constructor returns an error the whole list is discarded, so
+// verifying bucket access here would let one unreachable S3 endpoint take down
+// every other proxy in the same subscription — including the ones that have
+// nothing to do with fedarisha. Access is checked on first use instead, where
+// the failure is contained to this proxy.
+func NewClient(_ context.Context, sc StorageConfig, tuning TuningConfig) (*Client, error) {
+	store, err := buildStorage(sc)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +81,9 @@ func NewClient(ctx context.Context, sc StorageConfig, tuning TuningConfig) (*Cli
 	return &Client{dialer: d}, nil
 }
 
-func buildStorage(ctx context.Context, cfg StorageConfig) (storage.Storage, error) {
+// buildStorage constructs the backend without touching the network — see
+// NewClient for why that matters.
+func buildStorage(cfg StorageConfig) (storage.Storage, error) {
 	storageType := strings.ToLower(cfg.Type)
 	if storageType == "" && cfg.Bucket != "" {
 		storageType = "s3"
@@ -86,18 +94,14 @@ func buildStorage(ctx context.Context, cfg StorageConfig) (storage.Storage, erro
 		if cfg.Bucket == "" {
 			return nil, fmt.Errorf("fedarisha: s3 bucket is empty")
 		}
-		store := s3.New(s3.Config{
+		return s3.New(s3.Config{
 			Bucket:    cfg.Bucket,
 			Prefix:    cfg.Prefix,
 			Region:    cfg.Region,
 			Endpoint:  cfg.Endpoint,
 			AccessKey: cfg.AccessKey,
 			SecretKey: cfg.SecretKey,
-		})
-		if err := store.Init(ctx); err != nil {
-			return nil, fmt.Errorf("fedarisha: s3 init: %w", err)
-		}
-		return store, nil
+		}), nil
 	default:
 		return nil, fmt.Errorf("fedarisha: unsupported storage type %q", cfg.Type)
 	}
@@ -150,6 +154,20 @@ func (c *Client) getSession(ctx context.Context) (*yamux.Session, error) {
 
 	if c.session != nil && !c.session.IsClosed() {
 		return c.session, nil
+	}
+
+	// Verify bucket access on first use rather than at construction. A failure
+	// here fails this proxy's dial, which is what a health check will report —
+	// instead of taking the whole provider down at parse time.
+	//
+	// Retried until it succeeds rather than remembered: the first attempt can
+	// fail because the link is still coming up at boot, and caching that would
+	// disable the proxy until the core restarts.
+	if !c.initDone {
+		if err := c.dialer.Store.Init(ctx); err != nil {
+			return nil, fmt.Errorf("fedarisha: storage init: %w", err)
+		}
+		c.initDone = true
 	}
 
 	conn, err := c.dialer.Dial(ctx)

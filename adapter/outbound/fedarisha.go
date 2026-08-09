@@ -123,8 +123,10 @@ func NewFedarisha(option FedarishaOption) (*Fedarisha, error) {
 		option: &option,
 	}
 
-	// Constructing the client verifies bucket access, so a wrong key or endpoint
-	// fails here with the provider's own error rather than on first use.
+	// Constructing the client does no network I/O on purpose: mihomo discards an
+	// entire proxy provider if any one proxy fails to construct, so reaching for
+	// the bucket here would let one unreachable endpoint take down every other
+	// proxy in the same subscription. Access is checked on first dial instead.
 	client, err := fedarisha.NewClient(context.Background(),
 		fedarisha.StorageConfig{
 			Type:        option.Storage.Type,
