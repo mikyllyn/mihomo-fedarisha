@@ -31,6 +31,13 @@ type Config struct {
 	Endpoint  string // Custom endpoint for S3-compatible services (MinIO, R2, etc.)
 	AccessKey string
 	SecretKey string
+
+	// DialContext, when set, replaces the standard dialer for every request to
+	// the bucket. Inside mihomo this must be supplied: the process installs a
+	// guard that terminates it if anything reaches net.DefaultResolver, so a
+	// stock net/http client dies on the first DNS lookup. It also keeps this
+	// traffic on the direct path rather than looping back through a proxy.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // S3Store implements storage.Storage for S3-compatible backends.
@@ -55,7 +62,13 @@ type S3Store struct {
 // newHTTPClient builds an HTTP client with a private connection pool sized to
 // maxConns. Per-op context timeouts (read/upload) are the real deadline, so
 // ResponseHeaderTimeout is only a backstop.
-func newHTTPClient(maxConns int) *http.Client {
+func newHTTPClient(maxConns int, dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Client {
+	if dial == nil {
+		dial = (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+	}
 	return &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:          maxConns,
@@ -63,10 +76,7 @@ func newHTTPClient(maxConns int) *http.Client {
 			MaxConnsPerHost:       maxConns,
 			IdleConnTimeout:       120 * time.Second,
 			ResponseHeaderTimeout: 15 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
+			DialContext:           dial,
 		},
 	}
 }
@@ -84,8 +94,8 @@ func New(cfg Config) *S3Store {
 		cfg: cfg,
 		// Read pool covers concurrent GETs (read-ahead window x hedge) and the
 		// DELETEs of consumed files; write pool is dedicated to the PUT workers.
-		readClient:  newHTTPClient(96),
-		writeClient: newHTTPClient(48),
+		readClient:  newHTTPClient(96, cfg.DialContext),
+		writeClient: newHTTPClient(48, cfg.DialContext),
 	}
 
 	if cfg.Endpoint != "" {

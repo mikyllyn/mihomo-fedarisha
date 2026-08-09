@@ -3,7 +3,10 @@ package outbound
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
+
+	"github.com/metacubex/mihomo/component/dialer"
 
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/fedarisha"
@@ -123,6 +126,16 @@ func NewFedarisha(option FedarishaOption) (*Fedarisha, error) {
 		option: &option,
 	}
 
+	// Every request to the bucket goes through mihomo's dialer, never the standard
+	// library's. mihomo installs a guard that terminates the process on any use of
+	// net.DefaultResolver, so a stock http.Client dies on its first DNS lookup.
+	// Routing this way also keeps bucket traffic on the direct path with the
+	// configured interface and routing mark, instead of folding back into a proxy.
+	dialOptions := outbound.Base.DialOptions()
+	dialFn := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, addr, dialOptions...)
+	}
+
 	// Constructing the client does no network I/O on purpose: mihomo discards an
 	// entire proxy provider if any one proxy fails to construct, so reaching for
 	// the bucket here would let one unreachable endpoint take down every other
@@ -137,6 +150,7 @@ func NewFedarisha(option FedarishaOption) (*Fedarisha, error) {
 			AccessKey:   option.Storage.AccessKey,
 			SecretKey:   option.Storage.SecretKey,
 			SessionsDir: option.Storage.SessionsDir,
+			DialContext: dialFn,
 		},
 		fedarisha.TuningConfig{
 			PollIntervalMs:   option.Tuning.PollIntervalMs,
